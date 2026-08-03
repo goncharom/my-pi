@@ -1,0 +1,23 @@
+{
+  "name": "@kyototech/pi-packages",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal Pi skills and extensions.",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "MIT",
+  "packageManager": "pnpm@11.13.0",
+  "scripts": {
+    "build": "pnpm --recursive --if-present build"
+  },
+  "pi": {
+    "extensions": [
+      "./packages/extensions",
+      "./packages/extensions/*/packages/pi-extension"
+    ],
+    "skills": [
+      "./packages/skills"
+    ]
+  }
+}

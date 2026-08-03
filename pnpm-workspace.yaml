@@ -1,0 +1,10 @@
+packages:
+  - "packages/skills/*"
+  - "packages/extensions/*"
+  - "packages/extensions/*/packages/*"
+
+# Allow the native bundler and protobuf runtime setup; keep unrelated installs script-free.
+allowBuilds:
+  '@google/genai': false
+  esbuild: true
+  protobufjs: true

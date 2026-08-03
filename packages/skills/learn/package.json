@@ -1,0 +1,20 @@
+{
+  "name": "pi-skill-learn",
+  "version": "0.1.0",
+  "description": "Capture technical lessons into Markdown capsules and run spaced-repetition reviews.",
+  "keywords": [
+    "pi-package",
+    "pi-skill"
+  ],
+  "license": "MIT",
+  "files": [
+    "SKILL.md",
+    "scripts",
+    "tests"
+  ],
+  "pi": {
+    "skills": [
+      "./SKILL.md"
+    ]
+  }
+}

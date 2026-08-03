@@ -1,0 +1,129 @@
+{
+  "name": "pi-vscode-review",
+  "displayName": "Pi Review",
+  "description": "Bridge Pi review comments into VS Code.",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": ["Other"],
+  "main": "./dist/extension.js",
+  "files": [
+    "dist/extension.js"
+  ],
+  "extensionKind": ["workspace"],
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      {
+        "command": "piReview.sendPlanReview",
+        "title": "Send Plan Review to Pi",
+        "icon": "$(send)"
+      },
+      {
+        "command": "piReview.sendCodeReview",
+        "title": "Send Code Review to Pi",
+        "icon": "$(send)"
+      },
+      {
+        "command": "piReview.sendTestPrefill",
+        "title": "Pi Review: Send Test Prefill"
+      },
+      {
+        "command": "piReview.addComment",
+        "title": "Add Comment"
+      },
+      {
+        "command": "piReview.editComment",
+        "title": "Edit Comment",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "piReview.resolveComment",
+        "title": "Resolve Comment",
+        "icon": "$(check)"
+      },
+      {
+        "command": "piReview.reopenComment",
+        "title": "Reopen Comment",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "piReview.deleteComment",
+        "title": "Delete Comment",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "piReview.showConnection",
+        "title": "Pi Review: Show Connection"
+      },
+      {
+        "command": "piReview.disconnect",
+        "title": "Pi Review: Disconnect Pi"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "piReview.sendPlanReview",
+          "when": "piReview.activePlan == true",
+          "group": "navigation"
+        },
+        {
+          "command": "piReview.sendCodeReview",
+          "when": "piReview.activeDiff == true",
+          "group": "navigation"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "piReview.addComment",
+          "when": "commentController == piReview",
+          "group": "navigation"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "piReview.resolveComment",
+          "when": "commentThread == piReviewThread.unresolved || commentThread == piReviewThread.sent",
+          "group": "inline"
+        },
+        {
+          "command": "piReview.reopenComment",
+          "when": "commentThread == piReviewThread.resolved",
+          "group": "inline"
+        },
+        {
+          "command": "piReview.deleteComment",
+          "when": "commentThread =~ /piReviewThread.*/",
+          "group": "inline"
+        }
+      ],
+      "comments/comment/title": [
+        {
+          "command": "piReview.editComment",
+          "when": "comment == piReviewComment",
+          "group": "inline"
+        },
+        {
+          "command": "piReview.deleteComment",
+          "when": "comment == piReviewComment",
+          "group": "inline"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc -b tsconfig.json && esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/extension.js",
+    "package": "pnpm run build && corepack pnpm dlx @vscode/vsce package --allow-missing-repository --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.2",
+    "@types/vscode": "^1.96.0",
+    "esbuild": "^0.25.0",
+    "typebox": "^1.3.6"
+  }
+}

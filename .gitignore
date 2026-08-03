@@ -1,0 +1,14 @@
+node_modules/
+.pnpm-store/
+
+# Build and test output
+**/dist/
+**/build/
+**/coverage/
+**/*.tsbuildinfo
+*.vsix
+
+# Local/editor files
+.DS_Store
+.vscode/
+.pi/

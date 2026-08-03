@@ -1,0 +1,19 @@
+{
+  "name": "pi-skill-browser-cdp",
+  "version": "0.1.0",
+  "description": "Inspect and interact with local or user-authorized web apps through isolated Chrome/CDP.",
+  "keywords": [
+    "pi-package",
+    "pi-skill"
+  ],
+  "license": "MIT",
+  "files": [
+    "SKILL.md",
+    "scripts"
+  ],
+  "pi": {
+    "skills": [
+      "./SKILL.md"
+    ]
+  }
+}

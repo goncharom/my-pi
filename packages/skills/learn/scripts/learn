@@ -1,0 +1,634 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR=$(
+  cd "$(dirname "$0")"
+  pwd
+)
+
+SKILL_DIR=$(
+  cd "$SCRIPT_DIR/.."
+  pwd
+)
+
+CAPSULES_DIR=${LEARN_CAPSULES_DIR:-"$SKILL_DIR/data/capsules"}
+
+mkdir -p "$CAPSULES_DIR"
+
+ID_RE='^[a-z0-9]+(-[a-z0-9]+)*$'
+DATE_RE='^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$'
+INT_RE='^[0-9]+$'
+MIN_INTERVAL_DAYS=2
+
+warn() {
+  printf '%s\n' "$*" >&2
+}
+
+die() {
+  warn "$*"
+  exit 1
+}
+
+usage() {
+  die "Usage: learn next | record <id> <score> | status | validate <path>"
+}
+
+is_gnu_date() {
+  date --version >/dev/null 2>&1
+}
+
+today() {
+  if [ -n "${LEARN_TODAY:-}" ]; then
+    printf '%s\n' "$LEARN_TODAY"
+  else
+    date "+%Y-%m-%d"
+  fi
+}
+
+add_days() {
+  input_date=$1
+  days=$2
+
+  if is_gnu_date; then
+    date -d "$input_date + $days days" "+%Y-%m-%d"
+  else
+    date -j -f "%Y-%m-%d" "$input_date" \
+      -v+"${days}"d "+%Y-%m-%d"
+  fi
+}
+
+days_between() {
+  earlier=$1
+  later=$2
+
+  if is_gnu_date; then
+    earlier_epoch=$(date -d "$earlier" "+%s")
+    later_epoch=$(date -d "$later" "+%s")
+  else
+    earlier_epoch=$(date -j -f "%Y-%m-%d" "$earlier" "+%s")
+    later_epoch=$(date -j -f "%Y-%m-%d" "$later" "+%s")
+  fi
+
+  echo $(((later_epoch - earlier_epoch) / 86400))
+}
+
+valid_date() {
+  input_date=$1
+
+  if ! [[ "$input_date" =~ $DATE_RE ]]; then
+    return 1
+  fi
+
+  if is_gnu_date; then
+    parsed=$(date -d "$input_date" "+%Y-%m-%d" 2>/dev/null) || return 1
+  else
+    parsed=$(date -j -f "%Y-%m-%d" "$input_date" "+%Y-%m-%d" 2>/dev/null) || return 1
+  fi
+
+  [ "$parsed" = "$input_date" ]
+}
+
+absolute_path() {
+  input_path=$1
+  input_dir=$(dirname "$input_path")
+  input_base=$(basename "$input_path")
+  abs_dir=$(cd "$input_dir" && pwd)
+  printf '%s/%s\n' "$abs_dir" "$input_base"
+}
+
+read_frontmatter() {
+  awk '
+    NR == 1 && $0 == "---" {
+      in_frontmatter = 1
+      next
+    }
+
+    in_frontmatter && $0 == "---" {
+      exit
+    }
+
+    in_frontmatter {
+      separator = index($0, ":")
+
+      if (separator > 0) {
+        key = substr($0, 1, separator - 1)
+        value = substr($0, separator + 1)
+
+        sub(/^[[:space:]]+/, "", key)
+        sub(/[[:space:]]+$/, "", key)
+        sub(/^[[:space:]]+/, "", value)
+        sub(/[[:space:]]+$/, "", value)
+
+        printf "%s\t%s\n", key, value
+      }
+    }
+  ' "$1"
+}
+
+frontmatter_json() {
+  read_frontmatter "$1" |
+    jq -Rn '
+      reduce inputs as $line
+        ({};
+          ($line | split("\t")) as $parts |
+          .[$parts[0]] = ($parts[1] // "")
+        )
+    '
+}
+
+json_field() {
+  json=$1
+  field=$2
+  jq -r --arg field "$field" '.[$field] // ""' <<EOF
+$json
+EOF
+}
+
+has_closing_frontmatter() {
+  awk '
+    NR == 1 && $0 == "---" {
+      in_frontmatter = 1
+      next
+    }
+
+    in_frontmatter && $0 == "---" {
+      found = 1
+      exit
+    }
+
+    END {
+      exit (found ? 0 : 1)
+    }
+  ' "$1"
+}
+
+body_is_nonempty() {
+  awk '
+    NR == 1 && $0 == "---" {
+      in_frontmatter = 1
+      next
+    }
+
+    in_frontmatter && $0 == "---" {
+      in_frontmatter = 0
+      in_body = 1
+      next
+    }
+
+    in_body && $0 ~ /[^[:space:]]/ {
+      found = 1
+    }
+
+    END {
+      exit (found ? 0 : 1)
+    }
+  ' "$1"
+}
+
+validate_capsule_internal() {
+  path=$1
+  emit_json=$2
+  compare_path=${3:-$path}
+
+  if [ ! -f "$path" ]; then
+    warn "Invalid capsule: file does not exist"
+    warn "Path: $path"
+    return 1
+  fi
+
+  first_line=""
+  IFS= read -r first_line < "$path" || true
+  if [ "$first_line" != "---" ]; then
+    warn "Invalid capsule: first line is not frontmatter delimiter"
+    warn "Path: $path"
+    return 1
+  fi
+
+  if ! has_closing_frontmatter "$path"; then
+    warn "Invalid capsule: closing frontmatter delimiter is missing"
+    warn "Path: $path"
+    return 1
+  fi
+
+  fm=$(frontmatter_json "$path")
+
+  for field in id created due interval_days review_count last_reviewed last_score; do
+    if ! jq -e --arg field "$field" 'has($field)' >/dev/null <<EOF
+$fm
+EOF
+    then
+      warn "Invalid capsule: missing required field: $field"
+      warn "Path: $path"
+      return 1
+    fi
+  done
+
+  id=$(json_field "$fm" id)
+  created=$(json_field "$fm" created)
+  due=$(json_field "$fm" due)
+  interval_days=$(json_field "$fm" interval_days)
+  review_count=$(json_field "$fm" review_count)
+  last_reviewed=$(json_field "$fm" last_reviewed)
+  last_score=$(json_field "$fm" last_score)
+
+  if ! [[ "$id" =~ $ID_RE ]]; then
+    warn "Invalid capsule: id is invalid"
+    warn "ID: $id"
+    return 1
+  fi
+
+  expected_filename="$id.md"
+  actual_filename=$(basename "$compare_path")
+  if [ "$actual_filename" != "$expected_filename" ]; then
+    warn "Invalid capsule: filename does not match id"
+    warn "Expected filename: $expected_filename"
+    warn "Actual filename: $actual_filename"
+    return 1
+  fi
+
+  if ! valid_date "$created"; then
+    warn "Invalid capsule: created is not a valid YYYY-MM-DD date"
+    warn "created: $created"
+    return 1
+  fi
+
+  if ! valid_date "$due"; then
+    warn "Invalid capsule: due is not a valid YYYY-MM-DD date"
+    warn "due: $due"
+    return 1
+  fi
+
+  if ! [[ "$interval_days" =~ $INT_RE ]] || [ "$interval_days" -lt 1 ]; then
+    warn "Invalid capsule: interval_days must be an integer greater than or equal to 1"
+    warn "interval_days: $interval_days"
+    return 1
+  fi
+
+  if ! [[ "$review_count" =~ $INT_RE ]]; then
+    warn "Invalid capsule: review_count must be a nonnegative integer"
+    warn "review_count: $review_count"
+    return 1
+  fi
+
+  if [ -n "$last_reviewed" ] && ! valid_date "$last_reviewed"; then
+    warn "Invalid capsule: last_reviewed must be empty or a valid YYYY-MM-DD date"
+    warn "last_reviewed: $last_reviewed"
+    return 1
+  fi
+
+  if [ -n "$last_score" ]; then
+    if ! [[ "$last_score" =~ $INT_RE ]] || [ "$last_score" -lt 0 ] || [ "$last_score" -gt 3 ]; then
+      warn "Invalid capsule: last_score must be empty or an integer from 0 to 3"
+      warn "last_score: $last_score"
+      return 1
+    fi
+  fi
+
+  if ! body_is_nonempty "$path"; then
+    warn "Invalid capsule: Markdown body is empty"
+    warn "Path: $path"
+    return 1
+  fi
+
+  if [ "$emit_json" = "json" ]; then
+    abs_path=$(absolute_path "$path")
+    jq -n \
+      --arg id "$id" \
+      --arg path "$abs_path" \
+      '{status:"ok", id:$id, path:$path}'
+  fi
+}
+
+warn_invalid_capsule() {
+  path=$1
+  error_text=$2
+  printf 'Warning: invalid capsule %s\n' "$path" >&2
+  printf '%s\n' "$error_text" >&2
+}
+
+candidate_json() {
+  path=$1
+  fm=$2
+  today_value=$3
+
+  id=$(json_field "$fm" id)
+  due=$(json_field "$fm" due)
+  interval_days=$(json_field "$fm" interval_days)
+  review_count=$(json_field "$fm" review_count)
+  abs_path=$(absolute_path "$path")
+  days_overdue=$(days_between "$due" "$today_value")
+  weight=$((1 + days_overdue))
+
+  jq -cn \
+    --arg id "$id" \
+    --arg path "$abs_path" \
+    --arg due "$due" \
+    --argjson interval_days "$interval_days" \
+    --argjson review_count "$review_count" \
+    --argjson days_overdue "$days_overdue" \
+    --argjson weight "$weight" \
+    '{id:$id,path:$path,due:$due,interval_days:$interval_days,review_count:$review_count,days_overdue:$days_overdue,weight:$weight}'
+}
+
+random_pick() {
+  total_weight=$1
+
+  if [ -n "${LEARN_RANDOM_PICK:-}" ]; then
+    if ! [[ "$LEARN_RANDOM_PICK" =~ $INT_RE ]] || [ "$LEARN_RANDOM_PICK" -lt 1 ] || [ "$LEARN_RANDOM_PICK" -gt "$total_weight" ]; then
+      die "Invalid LEARN_RANDOM_PICK: must be between 1 and $total_weight"
+    fi
+    printf '%s\n' "$LEARN_RANDOM_PICK"
+    return 0
+  fi
+
+  random_value=$(((RANDOM << 15) + RANDOM))
+  echo $((random_value % total_weight + 1))
+}
+
+command_next() {
+  today_value=$(today)
+  candidate_lines=""
+
+  for capsule in "$CAPSULES_DIR"/*.md; do
+    [ -e "$capsule" ] || continue
+
+    if ! validation_error=$(validate_capsule_internal "$capsule" nojson 2>&1); then
+      warn_invalid_capsule "$capsule" "$validation_error"
+      continue
+    fi
+
+    fm=$(frontmatter_json "$capsule")
+    due=$(json_field "$fm" due)
+    days_overdue=$(days_between "$due" "$today_value")
+
+    if [ "$days_overdue" -ge 0 ]; then
+      candidate=$(candidate_json "$capsule" "$fm" "$today_value")
+      candidate_lines="${candidate_lines}${candidate}
+"
+    fi
+  done
+
+  if [ -z "$candidate_lines" ]; then
+    jq -n '{status:"empty"}'
+    return 0
+  fi
+
+  candidates=$(printf '%s' "$candidate_lines" | jq -s '.')
+  total_weight=$(jq '[.[].weight] | add // 0' <<EOF
+$candidates
+EOF
+)
+
+  if [ "$total_weight" -le 0 ]; then
+    jq -n '{status:"empty"}'
+    return 0
+  fi
+
+  pick=$(random_pick "$total_weight")
+  cumulative=0
+  selected=""
+
+  while IFS= read -r candidate; do
+    weight=$(jq -r '.weight' <<EOF
+$candidate
+EOF
+)
+    cumulative=$((cumulative + weight))
+    if [ "$cumulative" -ge "$pick" ]; then
+      selected=$candidate
+      break
+    fi
+  done <<EOF
+$(jq -c '.[]' <<CANDIDATES
+$candidates
+CANDIDATES
+)
+EOF
+
+  if [ -z "$selected" ]; then
+    die "Internal error: failed to select a due capsule"
+  fi
+
+  jq '{status:"ok", id, path, due, interval_days, review_count}' <<EOF
+$selected
+EOF
+}
+
+rewrite_capsule() {
+  source=$1
+  output=$2
+  due=$3
+  interval=$4
+  review_count=$5
+  last_reviewed=$6
+  last_score=$7
+
+  awk \
+    -v due="$due" \
+    -v interval="$interval" \
+    -v review_count="$review_count" \
+    -v last_reviewed="$last_reviewed" \
+    -v last_score="$last_score" '
+      NR == 1 && $0 == "---" {
+        print
+        in_frontmatter = 1
+        next
+      }
+
+      in_frontmatter && $0 == "---" {
+        print "due: " due
+        print "interval_days: " interval
+        print "review_count: " review_count
+        print "last_reviewed: " last_reviewed
+        print "last_score: " last_score
+        print
+        in_frontmatter = 0
+        next
+      }
+
+      in_frontmatter {
+        if ($0 ~ /^[[:space:]]*due[[:space:]]*:[[:space:]]*/ ||
+          $0 ~ /^[[:space:]]*interval_days[[:space:]]*:[[:space:]]*/ ||
+          $0 ~ /^[[:space:]]*review_count[[:space:]]*:[[:space:]]*/ ||
+          $0 ~ /^[[:space:]]*last_reviewed[[:space:]]*:[[:space:]]*/ ||
+          $0 ~ /^[[:space:]]*last_score[[:space:]]*:[[:space:]]*/) {
+          next
+        }
+
+        print
+        next
+      }
+
+      {
+        print
+      }
+    ' "$source" > "$output"
+}
+
+command_record() {
+  if [ "$#" -ne 2 ]; then
+    die "Usage: learn record <id> <score>"
+  fi
+
+  id=$1
+  score=$2
+
+  if ! [[ "$id" =~ $ID_RE ]]; then
+    die "Invalid capsule id: $id"
+  fi
+
+  if ! [[ "$score" =~ $INT_RE ]] || [ "$score" -lt 0 ] || [ "$score" -gt 3 ]; then
+    die "Invalid score: must be an integer from 0 to 3"
+  fi
+
+  capsule="$CAPSULES_DIR/$id.md"
+
+  if [ ! -f "$capsule" ]; then
+    die "Capsule not found: $id"
+  fi
+
+  validate_capsule_internal "$capsule" nojson
+
+  fm=$(frontmatter_json "$capsule")
+  old_interval=$(json_field "$fm" interval_days)
+  old_review_count=$(json_field "$fm" review_count)
+
+  case "$score" in
+    0)
+      new_interval=$MIN_INTERVAL_DAYS
+      ;;
+    1)
+      new_interval=$(
+        awk -v interval="$old_interval" -v minimum="$MIN_INTERVAL_DAYS" '
+          BEGIN {
+            result = int((interval * 1.25) + 0.5)
+            if (result < minimum) result = minimum
+            print result
+          }
+        '
+      )
+      ;;
+    2)
+      new_interval=$((old_interval * 2))
+
+      if [ "$new_interval" -lt 2 ]; then
+        new_interval=2
+      fi
+      ;;
+    3)
+      new_interval=$((old_interval * 3))
+
+      if [ "$new_interval" -lt 4 ]; then
+        new_interval=4
+      fi
+      ;;
+  esac
+
+  today_value=$(today)
+  new_due=$(add_days "$today_value" "$new_interval")
+  new_review_count=$((old_review_count + 1))
+
+  tmp=$(
+    mktemp "${capsule}.tmp.XXXXXX"
+  )
+
+  cleanup_tmp() {
+    rm -f "$tmp"
+  }
+  trap cleanup_tmp EXIT
+
+  rewrite_capsule "$capsule" "$tmp" "$new_due" "$new_interval" "$new_review_count" "$today_value" "$score"
+  validate_capsule_internal "$tmp" nojson "$capsule"
+
+  mv "$tmp" "$capsule"
+  trap - EXIT
+
+  jq -n \
+    --arg id "$id" \
+    --argjson score "$score" \
+    --argjson interval_days "$new_interval" \
+    --arg due "$new_due" \
+    --argjson review_count "$new_review_count" \
+    '{status:"ok", id:$id, score:$score, interval_days:$interval_days, due:$due, review_count:$review_count}'
+}
+
+command_status() {
+  today_value=$(today)
+  total=0
+  due_count=0
+  future_count=0
+  never_reviewed=0
+
+  for capsule in "$CAPSULES_DIR"/*.md; do
+    [ -e "$capsule" ] || continue
+
+    if ! validation_error=$(validate_capsule_internal "$capsule" nojson 2>&1); then
+      warn_invalid_capsule "$capsule" "$validation_error"
+      continue
+    fi
+
+    fm=$(frontmatter_json "$capsule")
+    due=$(json_field "$fm" due)
+    review_count=$(json_field "$fm" review_count)
+    days_overdue=$(days_between "$due" "$today_value")
+
+    total=$((total + 1))
+
+    if [ "$days_overdue" -ge 0 ]; then
+      due_count=$((due_count + 1))
+    else
+      future_count=$((future_count + 1))
+    fi
+
+    if [ "$review_count" -eq 0 ]; then
+      never_reviewed=$((never_reviewed + 1))
+    fi
+  done
+
+  jq -n \
+    --argjson total "$total" \
+    --argjson due "$due_count" \
+    --argjson future "$future_count" \
+    --argjson never_reviewed "$never_reviewed" \
+    '{status:"ok", total:$total, due:$due, future:$future, never_reviewed:$never_reviewed}'
+}
+
+command_validate() {
+  if [ "$#" -ne 1 ]; then
+    die "Usage: learn validate <path>"
+  fi
+
+  validate_capsule_internal "$1" json
+}
+
+if [ "$#" -lt 1 ]; then
+  usage
+fi
+
+command=$1
+shift
+
+case "$command" in
+  next)
+    if [ "$#" -ne 0 ]; then
+      usage
+    fi
+    command_next
+    ;;
+  record)
+    command_record "$@"
+    ;;
+  status)
+    if [ "$#" -ne 0 ]; then
+      usage
+    fi
+    command_status
+    ;;
+  validate)
+    command_validate "$@"
+    ;;
+  *)
+    usage
+    ;;
+esac
