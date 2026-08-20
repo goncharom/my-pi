@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import type { CodeAnchor, PlanAnchor, ReviewComment, SerializedRange } from "../../pi-extension/src/protocol";
+import type { CodeReviewTarget } from "./diff-resolver";
 
 export interface StoredPlanComment {
   id: string;
@@ -67,9 +68,9 @@ export class CommentStore {
     return this.getByPlan(planId, version).filter((comment) => comment.review.status === "unresolved");
   }
 
-  getUnresolvedByDiff(original: vscode.Uri, modified: vscode.Uri): StoredCodeComment[] {
-    const originalUri = original.toString();
-    const modifiedUri = modified.toString();
+  getUnresolvedByCodeReviewTarget(target: CodeReviewTarget): StoredCodeComment[] {
+    const originalUri = target.original?.toString();
+    const modifiedUri = target.modified.toString();
     return this.all().filter(
       (comment): comment is StoredCodeComment =>
         comment.review.kind === "code" &&

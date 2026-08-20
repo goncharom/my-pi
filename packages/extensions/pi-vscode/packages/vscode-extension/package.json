@@ -2,7 +2,7 @@
   "name": "pi-vscode-review",
   "displayName": "Pi Review",
   "description": "Bridge Pi review comments into VS Code.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "publisher": "local",
   "engines": {

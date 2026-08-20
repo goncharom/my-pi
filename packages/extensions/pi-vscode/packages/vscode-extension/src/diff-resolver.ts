@@ -3,10 +3,11 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import type { CodeAnchor } from "../../pi-extension/src/protocol";
 import { serializeRange } from "./comment-store";
+import { isAddedGitRevisionDocument } from "./git-change-resolver";
 import { parseGitUri } from "./git-uri-adapter";
 
-export interface TextDiffInput {
-  original: vscode.Uri;
+export interface CodeReviewTarget {
+  original?: vscode.Uri;
   modified: vscode.Uri;
 }
 
@@ -18,12 +19,21 @@ export interface DiffIdentity {
   modifiedRef?: string;
 }
 
-export function getActiveTextDiff(): TextDiffInput | undefined {
+export function getActiveTextDiff(): CodeReviewTarget | undefined {
   return asTextDiffInput(vscode.window.tabGroups.activeTabGroup.activeTab?.input);
 }
 
-export function getOpenTextDiffs(): TextDiffInput[] {
-  const diffs: TextDiffInput[] = [];
+export async function getActiveCodeReviewTarget(): Promise<CodeReviewTarget | undefined> {
+  const diff = getActiveTextDiff();
+  if (diff) return diff;
+
+  const uri = vscode.window.activeTextEditor?.document.uri;
+  if (uri && await isAddedGitRevisionDocument(uri)) return { modified: uri };
+  return undefined;
+}
+
+export function getOpenTextDiffs(): CodeReviewTarget[] {
+  const diffs: CodeReviewTarget[] = [];
   for (const group of vscode.window.tabGroups.all) {
     for (const tab of group.tabs) {
       const input = asTextDiffInput(tab.input);
@@ -33,25 +43,32 @@ export function getOpenTextDiffs(): TextDiffInput[] {
   return diffs;
 }
 
-export function findOpenTextDiffForUri(uri: vscode.Uri): TextDiffInput | undefined {
+export function findOpenTextDiffForUri(uri: vscode.Uri): CodeReviewTarget | undefined {
   const key = uri.toString();
-  return getOpenTextDiffs().find((diff) => diff.original.toString() === key || diff.modified.toString() === key);
+  return getOpenTextDiffs().find((diff) => diff.original?.toString() === key || diff.modified.toString() === key);
 }
 
-export function isDiffDocument(uri: vscode.Uri): boolean {
-  return Boolean(findOpenTextDiffForUri(uri));
-}
-
-export function diffSideForUri(diff: TextDiffInput, uri: vscode.Uri): "original" | "modified" | undefined {
-  const key = uri.toString();
-  if (diff.original.toString() === key) return "original";
-  if (diff.modified.toString() === key) return "modified";
+export async function findCodeReviewTargetForUri(uri: vscode.Uri): Promise<CodeReviewTarget | undefined> {
+  const diff = findOpenTextDiffForUri(uri);
+  if (diff) return diff;
+  if (await isAddedGitRevisionDocument(uri)) return { modified: uri };
   return undefined;
 }
 
-export async function createCodeAnchor(uri: vscode.Uri, range: vscode.Range | undefined, diff: TextDiffInput): Promise<CodeAnchor> {
+export async function isCodeReviewDocument(uri: vscode.Uri): Promise<boolean> {
+  return Boolean(await findCodeReviewTargetForUri(uri));
+}
+
+export function diffSideForUri(diff: CodeReviewTarget, uri: vscode.Uri): "original" | "modified" | undefined {
+  const key = uri.toString();
+  if (diff.modified.toString() === key) return "modified";
+  if (diff.original?.toString() === key) return "original";
+  return undefined;
+}
+
+export async function createCodeAnchor(uri: vscode.Uri, range: vscode.Range | undefined, diff: CodeReviewTarget): Promise<CodeAnchor> {
   const side = diffSideForUri(diff, uri);
-  if (!side) throw new Error("The commented document is not part of the active diff.");
+  if (!side) throw new Error("The commented document is not part of the active code review.");
 
   const document = await vscode.workspace.openTextDocument(uri);
   const normalizedRange = normalizeRange(document, range);
@@ -73,31 +90,28 @@ export async function createCodeAnchor(uri: vscode.Uri, range: vscode.Range | un
   };
 }
 
-export function matchesActiveDiffComment(commentUri: string, activeDiff: TextDiffInput): boolean {
-  return commentUri === activeDiff.original.toString() || commentUri === activeDiff.modified.toString();
-}
-
-function asTextDiffInput(input: unknown): TextDiffInput | undefined {
+function asTextDiffInput(input: unknown): CodeReviewTarget | undefined {
   if (input instanceof vscode.TabInputTextDiff) {
     return { original: input.original, modified: input.modified };
   }
 
-  const maybe = input as Partial<TextDiffInput> | undefined;
+  const maybe = input as Partial<CodeReviewTarget> | undefined;
   if (maybe?.original instanceof vscode.Uri && maybe.modified instanceof vscode.Uri) {
     return { original: maybe.original, modified: maybe.modified };
   }
   return undefined;
 }
 
-function resolveDiffIdentity(uri: vscode.Uri, side: "original" | "modified", diff: TextDiffInput): DiffIdentity {
+function resolveDiffIdentity(uri: vscode.Uri, side: "original" | "modified", diff: CodeReviewTarget): DiffIdentity {
   const base: DiffIdentity = { side };
   const gitInfo = parseGitUri(uri);
+  const originalGitInfo = diff.original ? parseGitUri(diff.original) : undefined;
   if (gitInfo) {
     return {
       ...base,
       repositoryRoot: gitInfo.repositoryRoot,
       relativePath: gitInfo.relativePath,
-      originalRef: side === "original" ? gitInfo.ref : parseGitUri(diff.original)?.ref,
+      originalRef: side === "original" ? gitInfo.ref : originalGitInfo?.ref,
       modifiedRef: side === "modified" ? gitInfo.ref : parseGitUri(diff.modified)?.ref,
     };
   }
@@ -108,14 +122,14 @@ function resolveDiffIdentity(uri: vscode.Uri, side: "original" | "modified", dif
       ...base,
       repositoryRoot: workspace.uri.fsPath,
       relativePath: path.relative(workspace.uri.fsPath, uri.fsPath),
-      originalRef: parseGitUri(diff.original)?.ref,
+      originalRef: originalGitInfo?.ref,
       modifiedRef: parseGitUri(diff.modified)?.ref,
     };
   }
 
   return {
     ...base,
-    originalRef: parseGitUri(diff.original)?.ref,
+    originalRef: originalGitInfo?.ref,
     modifiedRef: parseGitUri(diff.modified)?.ref,
   };
 }

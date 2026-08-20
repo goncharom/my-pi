@@ -4,6 +4,7 @@ import * as vscode from "vscode";
 export interface GitUriInfo {
   repositoryRoot?: string;
   relativePath?: string;
+  filePath: string;
   ref?: string;
 }
 
@@ -19,6 +20,7 @@ export function parseGitUri(uri: vscode.Uri): GitUriInfo | undefined {
   return {
     repositoryRoot: workspace?.uri.fsPath,
     relativePath: workspace ? path.relative(workspace.uri.fsPath, fsPath) : path.basename(fsPath),
+    filePath: fsPath,
     ref,
   };
 }

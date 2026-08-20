@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { PiCommentController } from "./comment-controller";
 import { CommentStore } from "./comment-store";
 import { createInstanceEntry, deleteRegistryEntry, writeRegistryEntry } from "./instance-registry";
-import { getActiveTextDiff } from "./diff-resolver";
+import { getActiveCodeReviewTarget } from "./diff-resolver";
 import { registerFileUriHandler } from "./file-uri-handler";
 import { PlanStore } from "./plan-store";
 import { compileCodeReview, compilePlanReview } from "./review-compiler";
@@ -70,14 +70,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
   );
 
-  const updateActiveContexts = () => {
+  const updateActiveContexts = async () => {
     const uri = vscode.window.activeTextEditor?.document.uri;
     void vscode.commands.executeCommand("setContext", "piReview.activePlan", Boolean(uri && planStore?.isPublishedPlan(uri)));
-    void vscode.commands.executeCommand("setContext", "piReview.activeDiff", Boolean(getActiveTextDiff()));
+    void vscode.commands.executeCommand("setContext", "piReview.activeDiff", Boolean(await getActiveCodeReviewTarget()));
   };
-  updateActiveContexts();
-  context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(updateActiveContexts));
-  context.subscriptions.push(vscode.window.tabGroups.onDidChangeTabs(updateActiveContexts));
+  void updateActiveContexts();
+  context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(() => void updateActiveContexts()));
+  context.subscriptions.push(vscode.window.tabGroups.onDidChangeTabs(() => void updateActiveContexts()));
 }
 
 async function sendCodeReview(): Promise<void> {
@@ -88,15 +88,15 @@ async function sendCodeReview(): Promise<void> {
     return;
   }
 
-  const diff = getActiveTextDiff();
-  if (!diff) {
-    vscode.window.showErrorMessage("Open a text diff before sending a code review.");
+  const target = await getActiveCodeReviewTarget();
+  if (!target) {
+    vscode.window.showErrorMessage("Open a text diff or an added Git file before sending a code review.");
     return;
   }
 
-  const comments = commentController?.getUnresolvedCodeComments(diff) ?? [];
+  const comments = commentController?.getUnresolvedCodeComments(target) ?? [];
   if (comments.length === 0) {
-    vscode.window.showErrorMessage("There are no unresolved comments on the active diff.");
+    vscode.window.showErrorMessage("There are no unresolved comments on the active code review.");
     return;
   }
 

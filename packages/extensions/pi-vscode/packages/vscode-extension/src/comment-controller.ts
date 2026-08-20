@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { CommentStore, deserializeRange, serializeRange, type StoredPlanComment, type StoredReviewComment, type StoredCodeComment } from "./comment-store";
-import { createCodeAnchor, findOpenTextDiffForUri, isDiffDocument, type TextDiffInput } from "./diff-resolver";
+import { createCodeAnchor, findCodeReviewTargetForUri, isCodeReviewDocument, type CodeReviewTarget } from "./diff-resolver";
 import type { PlanStore } from "./plan-store";
 import type { PlanAnchor } from "../../pi-extension/src/protocol";
 
@@ -40,8 +40,8 @@ export class PiCommentController implements vscode.Disposable {
       placeHolder: "Write review feedback for Pi...",
     };
     this.controller.commentingRangeProvider = {
-      provideCommentingRanges: (document) => {
-        if (!this.planStore.isPublishedPlan(document.uri) && !isDiffDocument(document.uri)) return [];
+      provideCommentingRanges: async (document) => {
+        if (!this.planStore.isPublishedPlan(document.uri) && !await isCodeReviewDocument(document.uri)) return [];
         return [new vscode.Range(0, 0, Math.max(document.lineCount - 1, 0), 0)];
       },
     };
@@ -70,8 +70,8 @@ export class PiCommentController implements vscode.Disposable {
     return this.commentStore.getUnresolvedByPlan(planId, version);
   }
 
-  getUnresolvedCodeComments(diff: TextDiffInput): StoredCodeComment[] {
-    return this.commentStore.getUnresolvedByDiff(diff.original, diff.modified);
+  getUnresolvedCodeComments(target: CodeReviewTarget): StoredCodeComment[] {
+    return this.commentStore.getUnresolvedByCodeReviewTarget(target);
   }
 
   async markSent(ids: string[]): Promise<void> {
@@ -101,15 +101,15 @@ export class PiCommentController implements vscode.Disposable {
       return;
     }
 
-    const diff = findOpenTextDiffForUri(thread.uri);
-    if (diff) {
-      const anchor = await createCodeAnchor(thread.uri, thread.range, diff);
+    const target = await findCodeReviewTargetForUri(thread.uri);
+    if (target) {
+      const anchor = await createCodeAnchor(thread.uri, thread.range, target);
       const stored = await this.commentStore.createCode({ uri: thread.uri.toString(), body: text, anchor });
       this.createOrUpdateThread(stored, thread);
       return;
     }
 
-    vscode.window.showErrorMessage("Pi Review comments are supported on published plans and open text diffs.");
+    vscode.window.showErrorMessage("Pi Review comments are supported on published plans, open text diffs, and added Git files.");
     thread.dispose();
   }
 
