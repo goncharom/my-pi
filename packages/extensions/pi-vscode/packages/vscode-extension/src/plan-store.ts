@@ -72,8 +72,7 @@ export class PlanStore {
 
     this.plansByUri.set(markdownUri.toString(), metadata);
 
-    const document = await vscode.workspace.openTextDocument(markdownUri);
-    await vscode.window.showTextDocument(document, { preview: false });
+    void this.showPlan(markdownUri);
 
     return {
       planId: resolvedPlanId,
@@ -89,6 +88,16 @@ export class PlanStore {
 
   getMetadata(uri: vscode.Uri): PlanMetadata | undefined {
     return this.plansByUri.get(uri.toString());
+  }
+
+  private async showPlan(uri: vscode.Uri): Promise<void> {
+    try {
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document, { preview: false });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      void vscode.window.showErrorMessage(`Plan was published, but VS Code could not open it: ${message}`);
+    }
   }
 
   private async nextVersion(planDir: string): Promise<number> {
