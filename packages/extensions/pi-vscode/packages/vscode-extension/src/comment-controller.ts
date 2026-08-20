@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { CommentStore, deserializeRange, serializeRange, type StoredPlanComment, type StoredReviewComment, type StoredCodeComment } from "./comment-store";
 import { createCodeAnchor, findCodeReviewTargetForUri, isCodeReviewDocument, type CodeReviewTarget } from "./diff-resolver";
 import type { PlanStore } from "./plan-store";
-import type { PlanAnchor } from "../../pi-extension/src/protocol";
+import type { PlanAnchor, ReviewIntent } from "../../pi-extension/src/protocol";
 
 class PiReviewComment implements vscode.Comment {
   body: string | vscode.MarkdownString;
@@ -36,8 +36,8 @@ export class PiCommentController implements vscode.Disposable {
   ) {
     this.controller = vscode.comments.createCommentController("piReview", "Pi Review");
     this.controller.options = {
-      prompt: "Add Pi review comment",
-      placeHolder: "Write review feedback for Pi...",
+      prompt: "Add Pi review feedback",
+      placeHolder: "Request a change or ask Pi a question...",
     };
     this.controller.commentingRangeProvider = {
       provideCommentingRanges: async (document) => {
@@ -56,7 +56,8 @@ export class PiCommentController implements vscode.Disposable {
 
   registerCommands(context: vscode.ExtensionContext): void {
     const registrations = [
-      vscode.commands.registerCommand("piReview.addComment", async (reply: vscode.CommentReply) => this.addComment(reply)),
+      vscode.commands.registerCommand("piReview.addComment", async (reply: vscode.CommentReply) => this.addComment(reply, "change")),
+      vscode.commands.registerCommand("piReview.addQuestion", async (reply: vscode.CommentReply) => this.addComment(reply, "question")),
       vscode.commands.registerCommand("piReview.editComment", async (comment: PiReviewComment) => this.editComment(comment)),
       vscode.commands.registerCommand("piReview.deleteComment", async (arg: vscode.CommentThread | PiReviewComment) => this.deleteComment(arg)),
       vscode.commands.registerCommand("piReview.resolveComment", async (thread: vscode.CommentThread) => this.setThreadStatus(thread, "resolved")),
@@ -79,7 +80,7 @@ export class PiCommentController implements vscode.Disposable {
     for (const id of ids) this.refreshThread(id);
   }
 
-  private async addComment(reply: vscode.CommentReply): Promise<void> {
+  private async addComment(reply: vscode.CommentReply, intent: ReviewIntent): Promise<void> {
     const text = reply.text.trim();
     if (!text) {
       vscode.window.showErrorMessage("Comment text cannot be empty.");
@@ -96,7 +97,7 @@ export class PiCommentController implements vscode.Disposable {
 
     if (this.planStore.isPublishedPlan(thread.uri)) {
       const anchor = await this.createPlanAnchor(thread.uri, thread.range);
-      const stored = await this.commentStore.createPlan({ uri: thread.uri.toString(), body: text, anchor });
+      const stored = await this.commentStore.createPlan({ uri: thread.uri.toString(), body: text, intent, anchor });
       this.createOrUpdateThread(stored, thread);
       return;
     }
@@ -104,7 +105,7 @@ export class PiCommentController implements vscode.Disposable {
     const target = await findCodeReviewTargetForUri(thread.uri);
     if (target) {
       const anchor = await createCodeAnchor(thread.uri, thread.range, target);
-      const stored = await this.commentStore.createCode({ uri: thread.uri.toString(), body: text, anchor });
+      const stored = await this.commentStore.createCode({ uri: thread.uri.toString(), body: text, intent, anchor });
       this.createOrUpdateThread(stored, thread);
       return;
     }
@@ -158,11 +159,12 @@ export class PiCommentController implements vscode.Disposable {
     this.threads.set(stored.id, thread);
     thread.range = range;
     thread.canReply = false;
-    thread.label = `${stored.displayId} ${statusLabel(stored.review.status)}`.trim();
+    thread.label = [stored.displayId, intentLabel(stored.review.intent), statusLabel(stored.review.status)].filter(Boolean).join(" · ");
     thread.contextValue = `piReviewThread.${stored.review.status}`;
     thread.state = stored.review.status === "resolved" ? vscode.CommentThreadState.Resolved : vscode.CommentThreadState.Unresolved;
     thread.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
-    thread.comments = [new PiReviewComment(stored.id, stored.review.body, statusLabel(stored.review.status), new Date(stored.updatedAt))];
+    const label = [intentLabel(stored.review.intent), statusLabel(stored.review.status)].filter(Boolean).join(" · ") || undefined;
+    thread.comments = [new PiReviewComment(stored.id, stored.review.body, label, new Date(stored.updatedAt))];
     return thread;
   }
 
@@ -223,6 +225,10 @@ function linesAfter(document: vscode.TextDocument, endLine: number): string[] {
   const lines: string[] = [];
   for (let line = endLine + 1; line <= last; line += 1) lines.push(document.lineAt(line).text);
   return lines;
+}
+
+function intentLabel(intent: ReviewIntent): string | undefined {
+  return intent === "question" ? "question" : undefined;
 }
 
 function statusLabel(status: StoredReviewComment["review"]["status"]): string | undefined {

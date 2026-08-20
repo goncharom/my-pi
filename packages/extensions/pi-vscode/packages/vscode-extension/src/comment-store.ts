@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import type { CodeAnchor, PlanAnchor, ReviewComment, SerializedRange } from "../../pi-extension/src/protocol";
+import type { CodeAnchor, PlanAnchor, ReviewComment, ReviewIntent, SerializedRange } from "../../pi-extension/src/protocol";
 import type { CodeReviewTarget } from "./diff-resolver";
 
 export interface StoredPlanComment {
@@ -79,7 +79,7 @@ export class CommentStore {
     );
   }
 
-  async createPlan(input: { uri: string; body: string; anchor: PlanAnchor }): Promise<StoredPlanComment> {
+  async createPlan(input: { uri: string; body: string; intent: ReviewIntent; anchor: PlanAnchor }): Promise<StoredPlanComment> {
     const id = this.nextDisplayId("P");
     const now = new Date().toISOString();
     const stored: StoredPlanComment = {
@@ -89,6 +89,7 @@ export class CommentStore {
       review: {
         id,
         kind: "plan",
+        intent: input.intent,
         body: input.body,
         status: "unresolved",
         anchor: input.anchor,
@@ -101,7 +102,7 @@ export class CommentStore {
     return stored;
   }
 
-  async createCode(input: { uri: string; body: string; anchor: CodeAnchor }): Promise<StoredCodeComment> {
+  async createCode(input: { uri: string; body: string; intent: ReviewIntent; anchor: CodeAnchor }): Promise<StoredCodeComment> {
     const id = this.nextDisplayId("C");
     const now = new Date().toISOString();
     const stored: StoredCodeComment = {
@@ -111,6 +112,7 @@ export class CommentStore {
       review: {
         id,
         kind: "code",
+        intent: input.intent,
         body: input.body,
         status: "unresolved",
         anchor: input.anchor,
@@ -190,12 +192,17 @@ function isStoredReviewComment(value: unknown): value is StoredReviewComment {
   const comment = value as Partial<StoredReviewComment>;
   const review = comment.review as Partial<ReviewComment> | undefined;
   const anchor = review?.anchor as Partial<PlanAnchor | CodeAnchor> | undefined;
-  return (
+  const isValid =
     typeof comment.id === "string" &&
     typeof comment.uri === "string" &&
     typeof comment.displayId === "string" &&
     typeof review?.body === "string" &&
     (review.kind === "plan" || review.kind === "code") &&
-    anchor?.kind === review.kind
-  );
+    anchor?.kind === review.kind;
+
+  if (!isValid || !review) return false;
+
+  // Comments created before intents were introduced are change requests.
+  if (review.intent === undefined) review.intent = "change";
+  return review.intent === "change" || review.intent === "question";
 }

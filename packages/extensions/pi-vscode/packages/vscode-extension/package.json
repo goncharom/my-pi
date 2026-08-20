@@ -33,7 +33,11 @@
       },
       {
         "command": "piReview.addComment",
-        "title": "Add Comment"
+        "title": "Request Change"
+      },
+      {
+        "command": "piReview.addQuestion",
+        "title": "Ask Question"
       },
       {
         "command": "piReview.editComment",
@@ -81,7 +85,12 @@
         {
           "command": "piReview.addComment",
           "when": "commentController == piReview",
-          "group": "navigation"
+          "group": "navigation@1"
+        },
+        {
+          "command": "piReview.addQuestion",
+          "when": "commentController == piReview",
+          "group": "navigation@2"
         }
       ],
       "comments/commentThread/title": [

@@ -5,9 +5,12 @@ export interface SerializedRange {
   endCharacter: number;
 }
 
+export type ReviewIntent = "change" | "question";
+
 export interface ReviewComment {
   id: string;
   kind: "plan" | "code";
+  intent: ReviewIntent;
   body: string;
   status: "unresolved" | "sent" | "resolved";
   anchor: PlanAnchor | CodeAnchor;
