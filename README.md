@@ -53,7 +53,13 @@ pi install ./packages/skills/<skill-package>
 pi install ./packages/extensions/<extension-package>
 ```
 
-The current Pi Review extension is installed with:
+Install the Zellij control extension with:
+
+```bash
+pi install ./packages/extensions/pi-zellij
+```
+
+The Pi Review extension is installed with:
 
 ```bash
 pi install ./packages/extensions/pi-vscode/packages/pi-extension
