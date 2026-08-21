@@ -1,0 +1,34 @@
+{
+  "name": "@kyototech/pi-go",
+  "version": "0.1.0",
+  "description": "Browse folders and open fresh or forked Pi sessions locally or in Zellij.",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "filesystem",
+    "zellij"
+  ],
+  "license": "MIT",
+  "files": [
+    "index.ts",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "latest",
+    "@earendil-works/pi-tui": "latest",
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.2"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
