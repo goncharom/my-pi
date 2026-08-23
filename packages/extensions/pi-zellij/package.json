@@ -1,5 +1,5 @@
 {
-  "name": "@kyototech/pi-zellij",
+  "name": "pi-zellij",
   "version": "0.1.0",
   "description": "Foundational Zellij session control tools for Pi.",
   "keywords": [

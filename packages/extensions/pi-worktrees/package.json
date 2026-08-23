@@ -1,5 +1,5 @@
 {
-  "name": "@kyototech/pi-worktrees",
+  "name": "pi-worktrees",
   "version": "0.1.0",
   "description": "Manage Git worktrees and open fresh or forked Pi sessions locally or in Zellij.",
   "keywords": [

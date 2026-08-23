@@ -1,12 +1,12 @@
 {
-  "name": "pi-go",
+  "name": "pi-lsp",
   "version": "0.1.0",
-  "description": "Browse folders and open fresh or forked Pi sessions locally or in Zellij.",
+  "type": "module",
+  "description": "Read-only LSP navigation, symbols, and diagnostics tools for Pi.",
   "keywords": [
     "pi-package",
     "pi-extension",
-    "filesystem",
-    "zellij"
+    "lsp"
   ],
   "license": "MIT",
   "files": [
@@ -16,14 +16,21 @@
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
+  "dependencies": {
+    "vscode-jsonrpc": "^9.0.1",
+    "vscode-languageserver-protocol": "^3.17.5",
+    "vscode-uri": "^3.1.0"
+  },
   "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
+    "typebox": "*"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "latest",
     "@earendil-works/pi-coding-agent": "latest",
-    "@earendil-works/pi-tui": "latest",
     "@types/node": "^22.10.5",
+    "typebox": "^1.3.6",
     "typescript": "^5.7.2"
   },
   "pi": {

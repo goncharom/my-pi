@@ -1,5 +1,5 @@
 {
-  "name": "@kyototech/pi-packages",
+  "name": "pi-packages",
   "version": "0.1.0",
   "private": true,
   "description": "Personal Pi skills and extensions.",

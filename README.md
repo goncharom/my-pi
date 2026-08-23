@@ -59,6 +59,12 @@ Install the Zellij control extension with:
 pi install ./packages/extensions/pi-zellij
 ```
 
+Install the read-only LSP tools with:
+
+```bash
+pi install ./packages/extensions/pi-lsp
+```
+
 The Pi Review extension is installed with:
 
 ```bash

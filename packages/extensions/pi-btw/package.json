@@ -1,5 +1,5 @@
 {
-  "name": "@kyototech/pi-btw",
+  "name": "pi-btw",
   "version": "0.1.0",
   "description": "Fork the current Pi conversation into a floating Zellij pane.",
   "keywords": [
