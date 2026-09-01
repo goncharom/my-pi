@@ -1,3 +1,4 @@
+import type { SerializedRange } from "../../pi-extension/src/protocol";
 import type { StoredCodeComment, StoredPlanComment } from "./comment-store";
 
 export function compilePlanReview(comments: StoredPlanComment[]): string {
@@ -39,26 +40,26 @@ export function compileCodeReview(comments: StoredCodeComment[]): string {
 }
 
 function formatPlanComment(comment: StoredPlanComment): string {
-  const selected = compactSelectedText(comment.review.anchor.selectedText);
-  return `[${comment.displayId}] “${selected}”\n${comment.review.body.trim()}`;
+  return formatComment(comment, "Plan");
 }
 
 function formatCodeComment(comment: StoredCodeComment): string {
   const anchor = comment.review.anchor;
-  const location = `${anchor.relativePath ?? anchor.documentUri}:${anchor.range.startLine + 1}`;
-  const quote = quoteSelectedText(anchor.selectedText);
-  return `[${comment.displayId}] ${location}\n${quote}\n\n${comment.review.body.trim()}`;
+  return formatComment(comment, anchor.relativePath ?? anchor.documentUri);
 }
 
-function compactSelectedText(text: string): string {
-  const normalized = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .join(" / ");
+function formatComment(comment: StoredPlanComment | StoredCodeComment, location: string): string {
+  const anchor = comment.review.anchor;
+  const quote = quoteSelectedText(anchor.selectedText);
+  return `[${comment.displayId}, ${formatLineRange(anchor.range)}] ${location}\n${quote}\n\n${comment.review.body.trim()}`;
+}
 
-  if (normalized.length <= 160) return normalized;
-  return `${normalized.slice(0, 157)}...`;
+function formatLineRange(range: SerializedRange): string {
+  const start = range.startLine + 1;
+  const end = range.endLine > range.startLine && range.endCharacter === 0
+    ? range.endLine
+    : range.endLine + 1;
+  return start === end ? `line ${start}` : `lines ${start}-${end}`;
 }
 
 function quoteSelectedText(text: string): string {
