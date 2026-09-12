@@ -1,10 +1,16 @@
+import { randomBytes } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { calculateCost, type Model, type Usage } from "@earendil-works/pi-ai";
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
-  truncateHead,
+  formatSize,
+  truncateTail,
   type ExtensionAPI,
   type ExtensionContext,
+  type TruncationResult,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -29,7 +35,7 @@ export default function webSearchExtension(pi: ExtensionAPI): void {
     name: "web_search",
     label: "Web Search",
     description:
-      "Search the live web using OpenAI hosted web search. Returns search findings and source URLs. Use for current or externally sourced information.",
+      `Search the live web using OpenAI hosted web search. Returns search findings and source URLs. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Use for current or externally sourced information.`,
     promptSnippet: "Search the live web for current information and sources",
     promptGuidelines: [
       "Use web_search when the request needs current information or facts that should be verified against web sources.",
@@ -45,20 +51,15 @@ export default function webSearchExtension(pi: ExtensionAPI): void {
 
       const result = await searchWeb(params.query, ctx, signal);
       const formatted = formatResult(params.query, result);
-      const truncated = truncateHead(formatted, {
-        maxBytes: DEFAULT_MAX_BYTES,
-        maxLines: DEFAULT_MAX_LINES,
-      });
-      const text = truncated.truncated
-        ? `${truncated.content}\n\n[Search output truncated to Pi's tool-output limit.]`
-        : truncated.content;
+      const output = await truncateWebSearchOutput(formatted);
 
       return {
-        content: [{ type: "text", text }],
+        content: [{ type: "text", text: output.text }],
         details: {
           query: params.query,
           queries: result.queries,
           sources: result.sources,
+          ...output.details,
         },
         usage: result.usage,
       };
@@ -380,6 +381,41 @@ function formatResult(query: string, result: SearchResponse): string {
   }
 
   return sections.join("\n\n");
+}
+
+export async function truncateWebSearchOutput(fullOutput: string): Promise<{
+  text: string;
+  details?: { truncation: TruncationResult; fullOutputPath: string };
+}> {
+  const truncation = truncateTail(fullOutput, {
+    maxLines: DEFAULT_MAX_LINES,
+    maxBytes: DEFAULT_MAX_BYTES,
+  });
+  if (!truncation.truncated) return { text: fullOutput };
+
+  const fullOutputPath = join(
+    tmpdir(),
+    `pi-web-search-${randomBytes(8).toString("hex")}.log`,
+  );
+  await writeFile(fullOutputPath, fullOutput, "utf8");
+
+  const startLine = truncation.totalLines - truncation.outputLines + 1;
+  const endLine = truncation.totalLines;
+  let text = truncation.content;
+
+  if (truncation.lastLinePartial) {
+    const finalLine = fullOutput.slice(fullOutput.lastIndexOf("\n") + 1);
+    text += `\n\n[Showing last ${formatSize(truncation.outputBytes)} of line ${endLine} (line is ${formatSize(Buffer.byteLength(finalLine, "utf8"))}). Full output: ${fullOutputPath}]`;
+  } else if (truncation.truncatedBy === "lines") {
+    text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. Full output: ${fullOutputPath}]`;
+  } else {
+    text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${fullOutputPath}]`;
+  }
+
+  return {
+    text,
+    details: { truncation, fullOutputPath },
+  };
 }
 
 function readErrorMessage(body: string): string {
