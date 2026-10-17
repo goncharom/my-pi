@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
-import { CommentStore, deserializeRange, serializeRange, type StoredPlanComment, type StoredReviewComment, type StoredCodeComment } from "./comment-store";
-import { createCodeAnchor, findCodeReviewTargetForUri, isCodeReviewDocument, type CodeReviewTarget } from "./diff-resolver";
+import { CommentStore, type StoredPlanComment, type StoredReviewComment, type StoredCodeComment } from "./comment-store";
+import { captureTextAnchor, deserializeRange } from "./text-anchor";
+import { belongsToReview, createCodeAnchor, findReviewFile, getActiveChangesReview, type ChangesReview } from "./changes-review";
 import type { PlanStore } from "./plan-store";
 import type { PlanAnchor, ReviewIntent } from "../../pi-extension/src/protocol";
 
@@ -29,6 +30,8 @@ export class PiCommentController implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private readonly threadIds = new WeakMap<vscode.CommentThread, string>();
   private readonly threads = new Map<string, vscode.CommentThread>();
+  private refreshGeneration = 0;
+  private disposed = false;
 
   constructor(
     private readonly planStore: PlanStore,
@@ -41,16 +44,44 @@ export class PiCommentController implements vscode.Disposable {
     };
     this.controller.commentingRangeProvider = {
       provideCommentingRanges: async (document) => {
-        if (!this.planStore.isPublishedPlan(document.uri) && !await isCodeReviewDocument(document.uri)) return [];
+        if (!this.planStore.isPublishedPlan(document.uri)) {
+          const review = await getActiveChangesReview(document.uri);
+          if (!review || !findReviewFile(review, document.uri)) return [];
+        }
         return [new vscode.Range(0, 0, Math.max(document.lineCount - 1, 0), 0)];
       },
     };
+    const refresh = () => void this.refreshCodeThreads();
+    this.disposables.push(
+      vscode.window.tabGroups.onDidChangeTabs(refresh),
+      vscode.window.tabGroups.onDidChangeTabGroups(refresh),
+      vscode.window.onDidChangeActiveTextEditor(refresh),
+    );
   }
 
   async restore(): Promise<void> {
     const comments = await this.commentStore.load();
     for (const comment of comments) {
-      this.createOrUpdateThread(comment);
+      if (comment.review.kind === "plan") this.createOrUpdateThread(comment);
+    }
+    await this.refreshCodeThreads();
+  }
+
+  private async refreshCodeThreads(): Promise<void> {
+    const generation = ++this.refreshGeneration;
+    const review = await getActiveChangesReview();
+    if (this.disposed || generation !== this.refreshGeneration) return;
+    // Reassigning the provider asks VS Code to recompute cached gutter ranges.
+    // Otherwise switching to a standalone editor can leave stale comment affordances.
+    this.controller.commentingRangeProvider = this.controller.commentingRangeProvider;
+    for (const stored of this.commentStore.all()) {
+      if (stored.review.kind !== "code") continue;
+      if (review && belongsToReview(stored.review.anchor, review)) {
+        if (!this.threads.has(stored.id)) this.createOrUpdateThread(stored);
+      } else {
+        this.threads.get(stored.id)?.dispose();
+        this.threads.delete(stored.id);
+      }
     }
   }
 
@@ -71,8 +102,8 @@ export class PiCommentController implements vscode.Disposable {
     return this.commentStore.getUnresolvedByPlan(planId, version);
   }
 
-  getUnresolvedCodeComments(target: CodeReviewTarget): StoredCodeComment[] {
-    return this.commentStore.getUnresolvedByCodeReviewTarget(target);
+  getUnresolvedCodeComments(review: ChangesReview): StoredCodeComment[] {
+    return this.commentStore.getUnresolvedByChangesReview(review);
   }
 
   async markSent(ids: string[]): Promise<void> {
@@ -102,15 +133,20 @@ export class PiCommentController implements vscode.Disposable {
       return;
     }
 
-    const target = await findCodeReviewTargetForUri(thread.uri);
-    if (target) {
-      const anchor = await createCodeAnchor(thread.uri, thread.range, target);
+    const review = await getActiveChangesReview(thread.uri);
+    if (review && findReviewFile(review, thread.uri)) {
+      const anchor = await createCodeAnchor(thread.uri, thread.range, review);
       const stored = await this.commentStore.createCode({ uri: thread.uri.toString(), body: text, intent, anchor });
-      this.createOrUpdateThread(stored, thread);
+      const activeReview = await getActiveChangesReview();
+      if (!this.disposed && activeReview && belongsToReview(stored.review.anchor, activeReview)) {
+        this.createOrUpdateThread(stored, thread);
+      } else {
+        thread.dispose();
+      }
       return;
     }
 
-    vscode.window.showErrorMessage("Pi Review comments are supported on published plans, open text diffs, and added Git files.");
+    vscode.window.showErrorMessage("Open a commit with Open Changes to add code review comments, or open a published Pi plan.");
     thread.dispose();
   }
 
@@ -131,7 +167,7 @@ export class PiCommentController implements vscode.Disposable {
     }
 
     const updated = await this.commentStore.updateBody(stored.id, next.trim());
-    if (updated) this.createOrUpdateThread(updated);
+    if (updated) this.refreshThread(updated.id);
   }
 
   private async deleteComment(arg: vscode.CommentThread | PiReviewComment): Promise<void> {
@@ -171,7 +207,7 @@ export class PiCommentController implements vscode.Disposable {
   private refreshThread(id: string): void {
     const stored = this.commentStore.get(id);
     if (!stored) return;
-    this.createOrUpdateThread(stored);
+    if (stored.review.kind === "plan" || this.threads.has(id)) this.createOrUpdateThread(stored);
   }
 
   private async createPlanAnchor(uri: vscode.Uri, range: vscode.Range | undefined): Promise<PlanAnchor> {
@@ -179,52 +215,21 @@ export class PiCommentController implements vscode.Disposable {
     if (!metadata) throw new Error("No published plan metadata found for this document.");
 
     const document = await vscode.workspace.openTextDocument(uri);
-    const normalizedRange = normalizeRange(document, range);
-    const selectedText = selectedTextForRange(document, normalizedRange);
-
     return {
       kind: "plan",
       planId: metadata.planId,
       planVersion: metadata.version,
       documentHash: metadata.documentHash,
-      range: serializeRange(normalizedRange),
-      selectedText,
-      linesBefore: linesBefore(document, normalizedRange.start.line),
-      linesAfter: linesAfter(document, normalizedRange.end.line),
+      ...captureTextAnchor(document, range),
     };
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.refreshGeneration++;
     for (const disposable of this.disposables) disposable.dispose();
     this.controller.dispose();
   }
-}
-
-function normalizeRange(document: vscode.TextDocument, range: vscode.Range | undefined): vscode.Range {
-  if (!range) return new vscode.Range(0, 0, 0, 0);
-  if (!range.isEmpty) return range;
-  const line = document.lineAt(Math.min(range.start.line, document.lineCount - 1));
-  return line.range;
-}
-
-function selectedTextForRange(document: vscode.TextDocument, range: vscode.Range): string {
-  const text = document.getText(range).trimEnd();
-  if (text.length > 0) return text;
-  return document.lineAt(Math.min(range.start.line, document.lineCount - 1)).text;
-}
-
-function linesBefore(document: vscode.TextDocument, startLine: number): string[] {
-  const first = Math.max(0, startLine - 3);
-  const lines: string[] = [];
-  for (let line = first; line < startLine; line += 1) lines.push(document.lineAt(line).text);
-  return lines;
-}
-
-function linesAfter(document: vscode.TextDocument, endLine: number): string[] {
-  const last = Math.min(document.lineCount - 1, endLine + 3);
-  const lines: string[] = [];
-  for (let line = endLine + 1; line <= last; line += 1) lines.push(document.lineAt(line).text);
-  return lines;
 }
 
 function intentLabel(intent: ReviewIntent): string | undefined {

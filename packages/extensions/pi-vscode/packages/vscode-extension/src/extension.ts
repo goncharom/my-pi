@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import { PiCommentController } from "./comment-controller";
 import { CommentStore } from "./comment-store";
 import { createInstanceEntry, deleteRegistryEntry, writeRegistryEntry } from "./instance-registry";
-import { getActiveCodeReviewTarget } from "./diff-resolver";
+import { getActiveChangesReview } from "./changes-review";
 import { registerFileUriHandler } from "./file-uri-handler";
 import { PlanStore } from "./plan-store";
 import { compileCodeReview, compilePlanReview } from "./review-compiler";
@@ -70,14 +70,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
   );
 
+  let contextGeneration = 0;
   const updateActiveContexts = async () => {
+    const generation = ++contextGeneration;
     const uri = vscode.window.activeTextEditor?.document.uri;
     void vscode.commands.executeCommand("setContext", "piReview.activePlan", Boolean(uri && planStore?.isPublishedPlan(uri)));
-    void vscode.commands.executeCommand("setContext", "piReview.activeDiff", Boolean(await getActiveCodeReviewTarget()));
+    void vscode.commands.executeCommand("setContext", "piReview.activeChangesReview", false);
+    const review = await getActiveChangesReview();
+    if (generation !== contextGeneration) return;
+    void vscode.commands.executeCommand("setContext", "piReview.activeChangesReview", Boolean(review));
   };
   void updateActiveContexts();
   context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(() => void updateActiveContexts()));
   context.subscriptions.push(vscode.window.tabGroups.onDidChangeTabs(() => void updateActiveContexts()));
+  context.subscriptions.push(vscode.window.tabGroups.onDidChangeTabGroups(() => void updateActiveContexts()));
 }
 
 async function sendCodeReview(): Promise<void> {
@@ -88,20 +94,20 @@ async function sendCodeReview(): Promise<void> {
     return;
   }
 
-  const target = await getActiveCodeReviewTarget();
-  if (!target) {
-    vscode.window.showErrorMessage("Open a text diff or an added Git file before sending a code review.");
-    return;
-  }
-
-  const comments = commentController?.getUnresolvedCodeComments(target) ?? [];
-  if (comments.length === 0) {
-    vscode.window.showErrorMessage("There are no unresolved comments on the active code review.");
-    return;
-  }
-
   sendingCodeReview = true;
   try {
+    const review = await getActiveChangesReview();
+    if (!review) {
+      vscode.window.showErrorMessage("Right-click a commit and choose Open Changes before sending a code review.");
+      return;
+    }
+
+    const comments = commentController?.getUnresolvedCodeComments(review) ?? [];
+    if (comments.length === 0) {
+      vscode.window.showErrorMessage("There are no unresolved comments in this Changes review.");
+      return;
+    }
+
     const result = await server.sendPrefill(compileCodeReview(comments));
     if (!result.ok) {
       vscode.window.showErrorMessage(result.message ?? "Pi rejected the code review.");

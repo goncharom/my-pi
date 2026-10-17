@@ -1,50 +1,24 @@
-import * as path from "node:path";
-import * as vscode from "vscode";
+import type * as vscode from "vscode";
 
 export interface GitUriInfo {
-  repositoryRoot?: string;
-  relativePath?: string;
   filePath: string;
-  ref?: string;
+  ref: string;
 }
 
+/** Decode the built-in Git extension's revision URI without guessing a repository root. */
 export function parseGitUri(uri: vscode.Uri): GitUriInfo | undefined {
   if (uri.scheme !== "git") return undefined;
-
-  const query = parseGitQuery(uri.query);
-  const queryPath = typeof query?.path === "string" ? query.path : undefined;
-  const ref = typeof query?.ref === "string" ? query.ref : undefined;
-  const fsPath = queryPath ?? uri.path;
-  const workspace = workspaceFolderForFsPath(fsPath);
-
-  return {
-    repositoryRoot: workspace?.uri.fsPath,
-    relativePath: workspace ? path.relative(workspace.uri.fsPath, fsPath) : path.basename(fsPath),
-    filePath: fsPath,
-    ref,
-  };
-}
-
-function parseGitQuery(query: string): Record<string, unknown> | undefined {
-  if (!query) return undefined;
+  let query: unknown;
   try {
-    return JSON.parse(query) as Record<string, unknown>;
+    query = JSON.parse(uri.query);
   } catch {
     try {
-      return JSON.parse(decodeURIComponent(query)) as Record<string, unknown>;
+      query = JSON.parse(decodeURIComponent(uri.query));
     } catch {
       return undefined;
     }
   }
-}
-
-function workspaceFolderForFsPath(fsPath: string): vscode.WorkspaceFolder | undefined {
-  let best: vscode.WorkspaceFolder | undefined;
-  for (const folder of vscode.workspace.workspaceFolders ?? []) {
-    const relative = path.relative(folder.uri.fsPath, fsPath);
-    if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
-      if (!best || folder.uri.fsPath.length > best.uri.fsPath.length) best = folder;
-    }
-  }
-  return best;
+  if (!query || typeof query !== "object" || !("path" in query) || !("ref" in query)) return undefined;
+  if (typeof query.path !== "string" || !query.path || typeof query.ref !== "string") return undefined;
+  return { filePath: query.path, ref: query.ref };
 }

@@ -1,8 +1,8 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import * as vscode from "vscode";
-import type { CodeAnchor, PlanAnchor, ReviewComment, ReviewIntent, SerializedRange } from "../../pi-extension/src/protocol";
-import type { CodeReviewTarget } from "./diff-resolver";
+import type * as vscode from "vscode";
+import type { CodeAnchor, PlanAnchor, ReviewComment, ReviewIntent } from "../../pi-extension/src/protocol";
+import { belongsToReview, type ChangesReview } from "./changes-review";
 
 export interface StoredPlanComment {
   id: string;
@@ -68,14 +68,12 @@ export class CommentStore {
     return this.getByPlan(planId, version).filter((comment) => comment.review.status === "unresolved");
   }
 
-  getUnresolvedByCodeReviewTarget(target: CodeReviewTarget): StoredCodeComment[] {
-    const originalUri = target.original?.toString();
-    const modifiedUri = target.modified.toString();
+  getUnresolvedByChangesReview(review: ChangesReview): StoredCodeComment[] {
     return this.all().filter(
       (comment): comment is StoredCodeComment =>
         comment.review.kind === "code" &&
         comment.review.status === "unresolved" &&
-        (comment.review.anchor.documentUri === originalUri || comment.review.anchor.documentUri === modifiedUri),
+        belongsToReview(comment.review.anchor, review),
     );
   }
 
@@ -172,19 +170,6 @@ export class CommentStore {
     const storageUri = this.context.storageUri ?? this.context.globalStorageUri;
     return path.join(storageUri.fsPath, "comments.json");
   }
-}
-
-export function serializeRange(range: vscode.Range): SerializedRange {
-  return {
-    startLine: range.start.line,
-    startCharacter: range.start.character,
-    endLine: range.end.line,
-    endCharacter: range.end.character,
-  };
-}
-
-export function deserializeRange(range: SerializedRange): vscode.Range {
-  return new vscode.Range(range.startLine, range.startCharacter, range.endLine, range.endCharacter);
 }
 
 function isStoredReviewComment(value: unknown): value is StoredReviewComment {
