@@ -12,7 +12,6 @@ export interface ReviewComment {
   kind: "plan" | "code";
   intent: ReviewIntent;
   body: string;
-  status: "unresolved" | "sent" | "resolved";
   anchor: PlanAnchor | CodeAnchor;
 }
 

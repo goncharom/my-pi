@@ -16,20 +16,14 @@
   "extensionKind": ["workspace"],
   "activationEvents": ["onStartupFinished"],
   "contributes": {
+    "configurationDefaults": {
+      "comments.openView": "never"
+    },
     "commands": [
       {
-        "command": "piReview.sendPlanReview",
-        "title": "Send Plan Review to Pi",
+        "command": "piReview.sendComments",
+        "title": "Send Comments to Pi",
         "icon": "$(send)"
-      },
-      {
-        "command": "piReview.sendCodeReview",
-        "title": "Send Code Review to Pi",
-        "icon": "$(send)"
-      },
-      {
-        "command": "piReview.sendTestPrefill",
-        "title": "Pi Review: Send Test Prefill"
       },
       {
         "command": "piReview.addComment",
@@ -43,16 +37,6 @@
         "command": "piReview.editComment",
         "title": "Edit Comment",
         "icon": "$(edit)"
-      },
-      {
-        "command": "piReview.resolveComment",
-        "title": "Resolve Comment",
-        "icon": "$(check)"
-      },
-      {
-        "command": "piReview.reopenComment",
-        "title": "Reopen Comment",
-        "icon": "$(debug-restart)"
       },
       {
         "command": "piReview.deleteComment",
@@ -71,13 +55,7 @@
     "menus": {
       "editor/title": [
         {
-          "command": "piReview.sendPlanReview",
-          "when": "piReview.activePlan == true",
-          "group": "navigation"
-        },
-        {
-          "command": "piReview.sendCodeReview",
-          "when": "piReview.activeChangesReview == true",
+          "command": "piReview.sendComments",
           "group": "navigation"
         }
       ],
@@ -95,18 +73,8 @@
       ],
       "comments/commentThread/title": [
         {
-          "command": "piReview.resolveComment",
-          "when": "commentThread == piReviewThread.unresolved || commentThread == piReviewThread.sent",
-          "group": "inline"
-        },
-        {
-          "command": "piReview.reopenComment",
-          "when": "commentThread == piReviewThread.resolved",
-          "group": "inline"
-        },
-        {
           "command": "piReview.deleteComment",
-          "when": "commentThread =~ /piReviewThread.*/",
+          "when": "commentThread == piReviewThread",
           "group": "inline"
         }
       ],

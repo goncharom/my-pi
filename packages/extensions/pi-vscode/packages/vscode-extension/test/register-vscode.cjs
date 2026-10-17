@@ -22,18 +22,22 @@ class Range {
     this.isEmpty = startLine === endLine && startCharacter === endCharacter;
   }
 }
+class TabInputText {
+  constructor(uri) { this.uri = uri; }
+}
 const listeners = new Set();
 const subscribe = (listener) => { listeners.add(listener); return { dispose() { listeners.delete(listener); } }; };
-const state = { controllers: [], commands: new Map(), errors: [] };
+const state = { controllers: [], commands: new Map(), errors: [], notifications: [] };
 const api = {
-  Uri, Range,
-  CommentMode: { Preview: 0 }, CommentThreadState: { Resolved: 1, Unresolved: 0 },
+  Uri, Range, TabInputText,
+  CommentMode: { Preview: 0 },
   CommentThreadCollapsibleState: { Collapsed: 0 },
   window: {
     activeTextEditor: undefined, visibleTextEditors: [],
     tabGroups: { activeTabGroup: { activeTab: undefined }, all: [], onDidChangeTabs: subscribe, onDidChangeTabGroups: subscribe },
     onDidChangeActiveTextEditor: subscribe,
     showErrorMessage(message) { state.errors.push(message); },
+    showInformationMessage(message) { state.notifications.push(message); },
   },
   workspace: { workspaceFolders: [], openTextDocument() { throw new Error('No test document installed'); } },
   commands: { registerCommand(name, handler) { state.commands.set(name, handler); return { dispose() { state.commands.delete(name); } }; } },

@@ -64,15 +64,10 @@ export class CommentStore {
     );
   }
 
-  getUnresolvedByPlan(planId: string, version: number): StoredPlanComment[] {
-    return this.getByPlan(planId, version).filter((comment) => comment.review.status === "unresolved");
-  }
-
-  getUnresolvedByChangesReview(review: ChangesReview): StoredCodeComment[] {
+  getByChangesReview(review: ChangesReview): StoredCodeComment[] {
     return this.all().filter(
       (comment): comment is StoredCodeComment =>
         comment.review.kind === "code" &&
-        comment.review.status === "unresolved" &&
         belongsToReview(comment.review.anchor, review),
     );
   }
@@ -89,7 +84,6 @@ export class CommentStore {
         kind: "plan",
         intent: input.intent,
         body: input.body,
-        status: "unresolved",
         anchor: input.anchor,
       },
       createdAt: now,
@@ -112,7 +106,6 @@ export class CommentStore {
         kind: "code",
         intent: input.intent,
         body: input.body,
-        status: "unresolved",
         anchor: input.anchor,
       },
       createdAt: now,
@@ -127,21 +120,9 @@ export class CommentStore {
     const stored = this.comments.get(id);
     if (!stored) return undefined;
     stored.review.body = body;
-    if (stored.review.status === "sent") stored.review.status = "unresolved";
     stored.updatedAt = new Date().toISOString();
     await this.save();
     return stored;
-  }
-
-  async setStatus(ids: string[], status: ReviewComment["status"]): Promise<void> {
-    const now = new Date().toISOString();
-    for (const id of ids) {
-      const stored = this.comments.get(id);
-      if (!stored) continue;
-      stored.review.status = status;
-      stored.updatedAt = now;
-    }
-    await this.save();
   }
 
   async delete(id: string): Promise<void> {
@@ -187,6 +168,8 @@ function isStoredReviewComment(value: unknown): value is StoredReviewComment {
 
   if (!isValid || !review) return false;
 
+  // Keep legacy feedback, but discard the obsolete sent/resolved lifecycle.
+  if ("status" in review) delete review.status;
   // Comments created before intents were introduced are change requests.
   if (review.intent === undefined) review.intent = "change";
   return review.intent === "change" || review.intent === "question";

@@ -10,6 +10,7 @@ import { CommentStore } from "../src/comment-store";
 import { PiCommentController } from "../src/comment-controller";
 import { PlanStore } from "../src/plan-store";
 import { compileCodeReview } from "../src/review-compiler";
+import { registerSendComments } from "../src/send-comments";
 
 const host = vscode as any;
 let root: string;
@@ -138,7 +139,7 @@ test("late Git results cannot activate a review after switching tabs", async () 
   assert.equal(await pending, undefined);
 });
 
-test("collects unresolved comments across the whole review without leaking other revisions", async () => {
+test("collects all comments across the whole review without leaking other revisions", async () => {
   activate({ textDiffs: [textDiff("edit.ts")] });
   const review = (await getActiveChangesReview())!;
   const directory = await fs.mkdtemp(path.join(root, "store-"));
@@ -149,21 +150,21 @@ test("collects unresolved comments across the whole review without leaking other
     anchor: await createCodeAnchor(uri("new file\nwith spaces.ts", commit), undefined, review) });
   const third = await store.createCode({ uri: uri("delete.ts", parent).toString(), body: "Keep this file", intent: "change",
     anchor: await createCodeAnchor(uri("delete.ts", parent), undefined, review) });
-  await store.setStatus([third.id], "resolved");
   await store.createCode({ uri: first.uri, body: "Different commit with the SAME original document", intent: "change",
     anchor: { ...first.review.anchor, modifiedRef: addedOnly } });
   await store.createCode({ uri: first.uri, body: "Different repository", intent: "change",
     anchor: { ...first.review.anchor, repositoryRoot: path.join(root, "elsewhere") } });
-  assert.deepEqual(store.getUnresolvedByChangesReview(review).map((comment) => comment.id), [first.id, second.id]);
-  const output = compileCodeReview(store.getUnresolvedByChangesReview(review));
+  const expected = [first.id, second.id, third.id];
+  assert.deepEqual(store.getByChangesReview(review).map((comment) => comment.id), expected);
+  const output = compileCodeReview(store.getByChangesReview(review));
   assert.match(output, /Change the original line/);
   assert.match(output, /Why add this\?/);
-  assert.doesNotMatch(output, /Different|Keep this file/);
-  await store.setStatus([first.id, second.id], "sent");
-  assert.equal(store.getUnresolvedByChangesReview(review).length, 0);
+  assert.match(output, /Keep this file/);
+  assert.doesNotMatch(output, /Different/);
   const reloaded = new CommentStore(context(directory));
   await reloaded.load();
-  assert.equal(reloaded.getUnresolvedByChangesReview(review).length, 0);
+  assert.deepEqual(reloaded.getByChangesReview(review).map((comment) => comment.id), expected);
+  assert.equal(compileCodeReview(reloaded.getByChangesReview(review)), output);
 });
 
 test("comment UI allows every review file, rejects standalone editors, and preserves plans", async () => {
@@ -185,7 +186,7 @@ test("comment UI allows every review file, rejects standalone editors, and prese
   assert.equal((await ranges(uri("edit.ts", addedOnly))).length, 0);
   const thread = ui.createCommentThread(uri("edit.ts", commit), new vscode.Range(0, 0, 0, 0), []);
   await host.__test.state.commands.get("piReview.addComment")({ thread, text: "Fix this" });
-  assert.equal(controller.getUnresolvedCodeComments((await getActiveChangesReview())!).length, 1);
+  assert.equal(controller.getCodeComments((await getActiveChangesReview())!).length, 1);
   assert.equal(thread.disposed, false);
   const rangeRefreshes = ui.rangeRefreshes;
   activate(textDiff("edit.ts"), uri("edit.ts", commit));
@@ -207,6 +208,47 @@ test("comment UI allows every review file, rejects standalone editors, and prese
   controller.dispose();
 });
 
+test("focusing a draft comment or another file does not rebuild the comment input", async () => {
+  for (const addedOnlyView of [false, true]) {
+    const documentUri = addedOnlyView ? uri("new-dir/added.ts", addedOnly) : uri("edit.ts", commit);
+    const tab = activate({ textDiffs: addedOnlyView ? [] : [textDiff("edit.ts")] }, documentUri,
+      addedOnlyView ? `${addedOnly.slice(0, 7)} - Add only` : "Changes");
+    const directory = await fs.mkdtemp(path.join(root, "focus-"));
+    const ctx = context(directory);
+    const controller = new PiCommentController(new PlanStore(ctx), new CommentStore(ctx));
+    await controller.restore();
+    controller.registerCommands(ctx);
+    const ui = host.__test.state.controllers.at(-1);
+    const draft = ui.createCommentThread(documentUri, new vscode.Range(0, 0, 0, 0), []);
+    const refreshes = ui.rangeRefreshes;
+
+    // Entering VS Code's embedded comment editor clears the active text editor.
+    host.window.activeTextEditor = undefined;
+    host.__test.fireEditorsChanged();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(ui.rangeRefreshes, refreshes, "focusing the input must not trigger widget reconstruction");
+
+    host.window.activeTextEditor = { document: { uri: documentUri } };
+    host.__test.fireEditorsChanged();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(ui.rangeRefreshes, refreshes, "returning to a file must not rebuild its draft");
+
+    if (!addedOnlyView) {
+      host.window.activeTextEditor = { document: { uri: uri("new file\nwith spaces.ts", commit) } };
+      // The tab API can replace its input object without changing the revisions.
+      tab.input = { textDiffs: [textDiff("edit.ts")] };
+      await getActiveChangesReview();
+      host.__test.fireEditorsChanged();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(ui.rangeRefreshes, refreshes, "same-review file/input changes must preserve drafts");
+    }
+    await host.__test.state.commands.get("piReview.addComment")({ thread: draft, text: "Draft survives focus" });
+    assert.equal(draft.disposed, false);
+    assert.equal(controller.getCodeComments((await getActiveChangesReview())!).length, 1);
+    controller.dispose();
+  }
+});
+
 test("missing historical directories and a parent workspace do not misidentify the repository", async () => {
   host.workspace.workspaceFolders = [{ uri: vscode.Uri.file(path.dirname(root)), name: "parent", index: 0 }];
   activate({ textDiffs: [] }, uri("new-dir/added.ts", addedOnly), `${deletedOnly.slice(0, 7)} - Deleted directory`);
@@ -214,4 +256,128 @@ test("missing historical directories and a parent workspace do not misidentify t
   assert.equal(review.repositoryRoot, root);
   assert.ok(findReviewFile(review, uri("new-dir/added.ts", addedOnly)));
   host.workspace.workspaceFolders = [workspace];
+});
+
+test("the manifest has one unconditional send button and defaults the Comments panel to stay closed", async () => {
+  const manifest = JSON.parse(await fs.readFile(path.join(__dirname, "../package.json"), "utf8"));
+  assert.deepEqual(manifest.contributes.menus["editor/title"], [{ command: "piReview.sendComments", group: "navigation" }]);
+  assert.equal(manifest.contributes.configurationDefaults["comments.openView"], "never");
+  assert.equal(manifest.contributes.commands.find((command: any) => command.command === "piReview.sendComments").enablement, undefined);
+  for (const removed of ["piReview.sendCodeReview", "piReview.sendPlanReview", "piReview.sendTestPrefill", "piReview.resolveComment", "piReview.reopenComment"]) {
+    assert.ok(!manifest.contributes.commands.some((command: any) => command.command === removed));
+  }
+});
+
+test("the send command resends all current-window comments without mutating feedback or rebuilding inputs", async () => {
+  activate({ textDiffs: [textDiff("edit.ts")] });
+  const review = (await getActiveChangesReview())!;
+  const directory = await fs.mkdtemp(path.join(root, "send-"));
+  const ctx = context(directory);
+  const store = new CommentStore(ctx);
+  const plans = new PlanStore(ctx);
+  const controller = new PiCommentController(plans, store);
+  await controller.restore();
+  const payloads: string[] = [];
+  let accepted = true;
+  const sender = { connectedPi: true, async sendPrefill(text: string) {
+    payloads.push(text);
+    return { type: "prefillResult" as const, ok: accepted, message: accepted ? undefined : "Try again" };
+  } };
+  const registration = registerSendComments(sender, plans, controller);
+  const send = host.__test.state.commands.get("piReview.sendComments");
+  await send();
+  assert.equal(payloads.length, 0, "an empty view should not send anything");
+  assert.match(host.__test.state.errors.at(-1), /no comments/i);
+  const first = await store.createCode({ uri: uri("edit.ts", commit).toString(), body: "Edit feedback", intent: "change",
+    anchor: await createCodeAnchor(uri("edit.ts", commit), undefined, review) });
+  await store.createCode({ uri: uri("delete.ts", parent).toString(), body: "Deletion feedback", intent: "question",
+    anchor: await createCodeAnchor(uri("delete.ts", parent), undefined, review) });
+  await store.createCode({ uri: first.uri, body: "Not this commit", intent: "change", anchor: { ...first.review.anchor, modifiedRef: addedOnly } });
+  const before = await fs.readFile(path.join(directory, "comments.json"), "utf8");
+  const ui = host.__test.state.controllers.at(-1);
+  const refreshes = ui.rangeRefreshes;
+  host.window.activeTextEditor = undefined; // The comment editor, not the file, has focus.
+  sender.connectedPi = false;
+  await send();
+  assert.equal(payloads.length, 0);
+  sender.connectedPi = true;
+  accepted = false;
+  await send();
+  assert.equal(host.__test.state.errors.at(-1), "Try again");
+  accepted = true;
+  await send();
+  await send();
+  assert.equal(payloads.length, 3);
+  assert.equal(payloads[0], payloads[1]);
+  assert.equal(payloads[1], payloads[2]);
+  assert.match(payloads[2], /Edit feedback/);
+  assert.match(payloads[2], /Deletion feedback/);
+  assert.doesNotMatch(payloads[2], /Not this commit/);
+  assert.equal(await fs.readFile(path.join(directory, "comments.json"), "utf8"), before);
+  assert.equal(ui.rangeRefreshes, refreshes, "sending must not rebuild comment inputs");
+  await store.delete(first.id);
+  await send();
+  assert.doesNotMatch(payloads[3], /Edit feedback/);
+  assert.match(payloads[3], /Deletion feedback/);
+  activate(textDiff("edit.ts"));
+  await send();
+  assert.equal(payloads.length, 4, "a visible button must not send a different view's comments");
+  registration.dispose();
+  controller.dispose();
+});
+
+test("legacy sent and resolved comments are retained without lifecycle tracking", async () => {
+  activate({ textDiffs: [textDiff("edit.ts")] });
+  const review = (await getActiveChangesReview())!;
+  const directory = await fs.mkdtemp(path.join(root, "legacy-"));
+  const ctx = context(directory);
+  const store = new CommentStore(ctx);
+  const anchor = await createCodeAnchor(uri("edit.ts", commit), undefined, review);
+  for (const body of ["Previously sent", "Previously resolved", "Previously new"]) {
+    await store.createCode({ uri: anchor.documentUri, body, intent: "change", anchor });
+  }
+  const filePath = path.join(directory, "comments.json");
+  const legacy = JSON.parse(await fs.readFile(filePath, "utf8"));
+  for (const [index, comment] of legacy.comments.entries()) comment.review.status = ["sent", "resolved", "unresolved"][index];
+  await fs.writeFile(filePath, JSON.stringify(legacy));
+  const restored = new CommentStore(ctx);
+  await restored.load();
+  const feedback = restored.getByChangesReview(review);
+  assert.equal(feedback.length, 3);
+  assert.ok(feedback.every((comment) => !("status" in comment.review)));
+  await restored.updateBody(feedback[0].id, "Updated feedback");
+  const saved = JSON.parse(await fs.readFile(filePath, "utf8"));
+  assert.ok(saved.comments.every((comment: any) => !("status" in comment.review)));
+});
+
+test("the same permanent send button uses the active plan tab even with comment-input focus", async () => {
+  const directory = await fs.mkdtemp(path.join(root, "plan-send-"));
+  const ctx = context(directory);
+  const store = new CommentStore(ctx);
+  const plans = new PlanStore(ctx);
+  const planUri = vscode.Uri.file(path.join(root, "plan.md"));
+  const metadata = { planId: "test-plan", version: 1, title: "Plan", documentHash: "hash", createdAt: new Date().toISOString() };
+  plans.getMetadata = (documentUri) => documentUri.toString() === planUri.toString() ? metadata : undefined;
+  const controller = new PiCommentController(plans, store);
+  activate(new vscode.TabInputText(planUri));
+  await controller.restore();
+  const anchor = { kind: "plan" as const, planId: metadata.planId, planVersion: 1, documentHash: "hash",
+    range: { startLine: 0, startCharacter: 0, endLine: 0, endCharacter: 4 }, selectedText: "Plan", linesBefore: [], linesAfter: [] };
+  await store.createPlan({ uri: planUri.toString(), body: "Revise the plan", intent: "change", anchor });
+  await store.createPlan({ uri: planUri.toString(), body: "Explain the plan", intent: "question", anchor });
+  await store.createPlan({ uri: planUri.toString(), body: "Different version", intent: "change", anchor: { ...anchor, planVersion: 2 } });
+  const payloads: string[] = [];
+  const registration = registerSendComments({ connectedPi: true, async sendPrefill(text) {
+    payloads.push(text); return { type: "prefillResult", ok: true };
+  } }, plans, controller);
+  const send = host.__test.state.commands.get("piReview.sendComments");
+  await send();
+  await send();
+  assert.equal(payloads.length, 2);
+  assert.equal(payloads[0], payloads[1]);
+  assert.match(payloads[0], /Revise the plan/);
+  assert.match(payloads[0], /Explain the plan/);
+  assert.doesNotMatch(payloads[0], /Different version/);
+  registration.dispose();
+  controller.dispose();
 });

@@ -6,13 +6,21 @@ Pi Review bridges Pi plan and code reviews into a Remote-SSH VS Code window.
 
 Right-click a commit in VS Code's Source Control graph and choose **Open Changes**.
 Add change requests or questions anywhere in that multi-file editor, then use
-**Send Code Review to Pi** in the editor toolbar to send all unresolved comments
-across the review. Edited, added, deleted, and renamed files are included.
+**Send Comments to Pi** in the editor toolbar to send every saved comment across
+the review. Edited, added, deleted, and renamed files are included. The button is
+always visible; each click sends the current comments again, without sent/new or
+resolved states. Delete feedback you no longer want to send.
 
 Standalone file diffs and individual Git revision editors are not code review
 scopes. Comments are scoped to the repository and both revisions, so feedback
 from another commit is not included just because it shares a file or parent.
-Published plan reviews are unchanged.
+The same button sends all comments on the active published plan version. Focusing
+a comment input does not change which review is sent.
+
+The extension defaults VS Code's `comments.openView` setting to `never`, keeping
+the built-in Comments panel from opening automatically. This is a shared VS Code
+setting: it also affects other comment providers, and an explicit user/workspace
+setting takes precedence. The Comments panel remains available to open manually.
 
 The multi-diff tab API is not yet in VS Code's stable typings. The extension
 feature-detects its `textDiffs` property without enabling proposed APIs. VS Code

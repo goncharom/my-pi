@@ -31,6 +31,7 @@ export class PiCommentController implements vscode.Disposable {
   private readonly threadIds = new WeakMap<vscode.CommentThread, string>();
   private readonly threads = new Map<string, vscode.CommentThread>();
   private refreshGeneration = 0;
+  private rangeContext?: { tab: vscode.Tab | undefined; reviewKey: string | undefined };
   private disposed = false;
 
   constructor(
@@ -71,9 +72,15 @@ export class PiCommentController implements vscode.Disposable {
     const generation = ++this.refreshGeneration;
     const review = await getActiveChangesReview();
     if (this.disposed || generation !== this.refreshGeneration) return;
-    // Reassigning the provider asks VS Code to recompute cached gutter ranges.
-    // Otherwise switching to a standalone editor can leave stale comment affordances.
-    this.controller.commentingRangeProvider = this.controller.commentingRangeProvider;
+    const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    const reviewKey = review && JSON.stringify([review.repositoryRoot, review.originalRef, review.modifiedRef]);
+    if (!this.rangeContext || this.rangeContext.tab !== tab || this.rangeContext.reviewKey !== reviewKey) {
+      this.rangeContext = { tab, reviewKey };
+      // Refresh stale gutters only when the review context changes. Reassigning
+      // this provider rebuilds comment widgets, so doing it on comment-input
+      // focus changes would destroy the editor the user is trying to type in.
+      this.controller.commentingRangeProvider = this.controller.commentingRangeProvider;
+    }
     for (const stored of this.commentStore.all()) {
       if (stored.review.kind !== "code") continue;
       if (review && belongsToReview(stored.review.anchor, review)) {
@@ -91,24 +98,17 @@ export class PiCommentController implements vscode.Disposable {
       vscode.commands.registerCommand("piReview.addQuestion", async (reply: vscode.CommentReply) => this.addComment(reply, "question")),
       vscode.commands.registerCommand("piReview.editComment", async (comment: PiReviewComment) => this.editComment(comment)),
       vscode.commands.registerCommand("piReview.deleteComment", async (arg: vscode.CommentThread | PiReviewComment) => this.deleteComment(arg)),
-      vscode.commands.registerCommand("piReview.resolveComment", async (thread: vscode.CommentThread) => this.setThreadStatus(thread, "resolved")),
-      vscode.commands.registerCommand("piReview.reopenComment", async (thread: vscode.CommentThread) => this.setThreadStatus(thread, "unresolved")),
     ];
     context.subscriptions.push(...registrations);
     this.disposables.push(...registrations);
   }
 
-  getUnresolvedPlanComments(planId: string, version: number): StoredPlanComment[] {
-    return this.commentStore.getUnresolvedByPlan(planId, version);
+  getPlanComments(planId: string, version: number): StoredPlanComment[] {
+    return this.commentStore.getByPlan(planId, version);
   }
 
-  getUnresolvedCodeComments(review: ChangesReview): StoredCodeComment[] {
-    return this.commentStore.getUnresolvedByChangesReview(review);
-  }
-
-  async markSent(ids: string[]): Promise<void> {
-    await this.commentStore.setStatus(ids, "sent");
-    for (const id of ids) this.refreshThread(id);
+  getCodeComments(review: ChangesReview): StoredCodeComment[] {
+    return this.commentStore.getByChangesReview(review);
   }
 
   private async addComment(reply: vscode.CommentReply, intent: ReviewIntent): Promise<void> {
@@ -180,13 +180,6 @@ export class PiCommentController implements vscode.Disposable {
     this.threads.delete(id);
   }
 
-  private async setThreadStatus(thread: vscode.CommentThread, status: "resolved" | "unresolved"): Promise<void> {
-    const id = this.threadIds.get(thread);
-    if (!id) return;
-    await this.commentStore.setStatus([id], status);
-    this.refreshThread(id);
-  }
-
   private createOrUpdateThread(stored: StoredReviewComment, existingThread?: vscode.CommentThread): vscode.CommentThread {
     const range = deserializeRange(stored.review.anchor.range);
     const thread = existingThread ?? this.threads.get(stored.id) ?? this.controller.createCommentThread(vscode.Uri.parse(stored.uri), range, []);
@@ -195,11 +188,10 @@ export class PiCommentController implements vscode.Disposable {
     this.threads.set(stored.id, thread);
     thread.range = range;
     thread.canReply = false;
-    thread.label = [stored.displayId, intentLabel(stored.review.intent), statusLabel(stored.review.status)].filter(Boolean).join(" · ");
-    thread.contextValue = `piReviewThread.${stored.review.status}`;
-    thread.state = stored.review.status === "resolved" ? vscode.CommentThreadState.Resolved : vscode.CommentThreadState.Unresolved;
+    const label = intentLabel(stored.review.intent);
+    thread.label = [stored.displayId, label].filter(Boolean).join(" · ");
+    thread.contextValue = "piReviewThread";
     thread.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
-    const label = [intentLabel(stored.review.intent), statusLabel(stored.review.status)].filter(Boolean).join(" · ") || undefined;
     thread.comments = [new PiReviewComment(stored.id, stored.review.body, label, new Date(stored.updatedAt))];
     return thread;
   }
@@ -234,12 +226,6 @@ export class PiCommentController implements vscode.Disposable {
 
 function intentLabel(intent: ReviewIntent): string | undefined {
   return intent === "question" ? "question" : undefined;
-}
-
-function statusLabel(status: StoredReviewComment["review"]["status"]): string | undefined {
-  if (status === "sent") return "sent";
-  if (status === "resolved") return "resolved";
-  return undefined;
 }
 
 function isPiReviewComment(value: unknown): value is PiReviewComment {
