@@ -109,6 +109,36 @@ pi install git:github.com/<owner>/<repo>
 
 Pi runs `npm install` for Git packages. No pnpm build or protocol build is required for the Pi resources. Use `pi config` to enable or disable individual resources. Pi does not install arbitrary Git subdirectories directly; for separate GitHub installs, clone the repository and install a local package path, or publish each standalone package to npm.
 
+## Knowledge skill
+
+The [`knowledge` skill](packages/skills/knowledge/SKILL.md) answers substantive questions on any topic from a persistent Markdown knowledge repository and saves useful new explanations there. It searches for existing pages before creating new ones, so follow-up questions improve the same reference rather than produce duplicate notes.
+
+It is included in the aggregate install. To install only this skill from a clone:
+
+```bash
+pi install ./packages/skills/knowledge
+```
+
+Run `/reload` in an existing Pi session, then ask naturally or invoke it explicitly:
+
+```text
+/skill:knowledge How does this authentication flow work?
+```
+
+The default knowledge repository is `~/knowledge`, regardless of which project Pi is working in. The skill creates it as a local Git repository on first use if it does not exist. Existing directories are reused without reinitialization. Pages are ordinary Markdown with tags and optional aliases, searchable in VS Code; there are no required sections, scripts, indexes, or databases. It does not publish to GitHub or automatically commit or push.
+
+### Optional global directive (copy and paste)
+
+After installing, you can manually add this line to `~/.pi/agent/AGENTS.md` to encourage automatic use from any project:
+
+```markdown
+Use the `knowledge` skill for substantive explanations and knowledge questions on any topic, from any working directory: consult existing pages first and preserve useful new understanding unless I ask not to save.
+```
+
+To use a different repository, add a sentence to the same instructions, for example: `My knowledge repository is ~/notes/research.` No separate configuration file is needed.
+
+Installing this package does **not** add the directive or change your global instructions. Automatic skill selection is model-guided, not guaranteed; `/skill:knowledge` explicitly loads the workflow when needed. Read-only questions need no page edits, and requests not to save are respected.
+
 ## Package conventions
 
 Each standalone package should have its own `package.json` and be independently installable with `pi install <path>`:

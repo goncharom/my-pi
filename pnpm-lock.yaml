@@ -185,6 +185,8 @@ importers:
 
   packages/skills/browser-cdp: {}
 
+  packages/skills/knowledge: {}
+
   packages/skills/learn: {}
 
 packages:
