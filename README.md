@@ -65,6 +65,22 @@ Install the read-only LSP tools with:
 pi install ./packages/extensions/pi-lsp
 ```
 
+Install per-request Markdown instructions with:
+
+```bash
+pi install ./packages/extensions/pi-extra-prompts
+```
+
+Put instructions in `~/.pi/agent/extra-prompts.md` (global) or `.pi/extra-prompts.md` (project), then run `/reload`.
+
+Fork the current conversation into a floating Zellij pane with:
+
+```bash
+pi install ./packages/extensions/pi-btw
+```
+
+Then run `/btw` in Pi.
+
 The Pi Review extension is installed with:
 
 ```bash
